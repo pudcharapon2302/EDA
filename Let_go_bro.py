@@ -15,7 +15,6 @@ from geopy.distance import geodesic
 from datetime import datetime
 import logging
 
-# (ส่วน logging และ class definition เหมือนเดิม)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -24,8 +23,7 @@ class CafeAmazonScraperV3_CostSaver:
         self.gmaps = googlemaps.Client(key=api_key)
         self.api_key = api_key
 
-    def create_thailand_grid(self, grid_size_km=16): # ค่าเริ่มต้นเป็น 16 กม.
-        # ... (โค้ดส่วนนี้เหมือนเดิม)
+    def create_thailand_grid(self, grid_size_km=16):
         logger.info(f"กำลังสร้าง Grid Search ขนาด {grid_size_km}x{grid_size_km} กม. สำหรับประเทศไทย...")
         lat_min, lat_max = 5.6, 20.5
         lng_min, lng_max = 97.3, 105.7
@@ -42,18 +40,10 @@ class CafeAmazonScraperV3_CostSaver:
         logger.info(f"สร้าง Grid สำเร็จ จำนวนทั้งหมด {len(grid_centers)} ช่อง")
         return grid_centers
 
-    # **** START: จุดที่มีการแก้ไข ****
     def search_cafe_amazon_in_thailand(self, grid_size_km=16):
-        """
-        (แก้ไข) ค้นหาสาขา Cafe Amazon โดยรับขนาด Grid เพื่อควบคุมค่าใช้จ่ายและความละเอียด
-
-        Args:
-            grid_size_km (int): ขนาดของ Grid ยิ่งใหญ่ยิ่งถูก แต่เสี่ยงข้อมูลตกหล่นในที่หนาแน่น
-        """
         logger.info(f"เริ่มค้นหาสาขาด้วย Grid Search ขนาด {grid_size_km} กม. (โหมดประหยัด)...")
 
         grid_centers = self.create_thailand_grid(grid_size_km)
-        # คำนวณรัศมีให้ครอบคลุมมุมของ Grid
         radius_m = int(grid_size_km * 1000 / math.sqrt(2))
 
         all_cafes = []
@@ -81,7 +71,6 @@ class CafeAmazonScraperV3_CostSaver:
                 time.sleep(1)
                 continue
 
-        # กรองข้อมูล
         final_cafe_list = []
         for cafe in all_cafes:
             place_id = cafe.get('place_id')
@@ -94,11 +83,10 @@ class CafeAmazonScraperV3_CostSaver:
         logger.info(f"ค้นพบสาขา Cafe Amazon ที่ไม่ซ้ำกันทั้งหมด: {len(final_cafe_list)} สาขา")
         return final_cafe_list
 
-    # ... (ส่วน get_place_details, analyze_location_type, etc. เหมือนเดิมทั้งหมด) ...
-    # (เราจะคัดลอกส่วนที่เหลือมาเพื่อให้โค้ดสมบูรณ์)
     def get_place_details(self, place_id):
         try:
-            details = self.gmaps.place(place_id=place_id, fields=['name', 'formatted_address', 'geometry', 'types', 'rating', 'user_ratings_total','business_status'], language='th')
+            # ลบ 'types' ออกจาก fields เพราะ Google Maps Places API ไม่รองรับแล้ว
+            details = self.gmaps.place(place_id=place_id, fields=['name', 'formatted_address', 'geometry', 'rating', 'user_ratings_total', 'business_status'], language='th')
             return details.get('result')
         except Exception as e:
             logger.error(f"ไม่สามารถดึงข้อมูลรายละเอียดของ {place_id} ได้: {e}")
@@ -110,7 +98,7 @@ class CafeAmazonScraperV3_CostSaver:
             if not rev_geo: return 'ไม่สามารถระบุได้'
             top_res = rev_geo[0]
             addr_comp = top_res.get('address_components', [])
-            types = top_res.get('types', [])
+            types = top_res.get('types', []) # types จาก reverse_geocode ยังใช้ได้อยู่
             for comp in addr_comp:
                 if 'route' in comp.get('types', []):
                     road_name = comp.get('long_name', '').lower()
@@ -123,29 +111,46 @@ class CafeAmazonScraperV3_CostSaver:
             logger.error(f"ไม่สามารถวิเคราะห์ลักษณะทำเลได้: {e}")
             return 'ไม่สามารถระบุได้'
 
-    def analyze_target_audience(self, place_details):
-        types = place_details.get('types', [])
+    def analyze_target_audience(self, cafe_summary, place_details): # รับ cafe_summary เพิ่มเข้ามา
         audience = set()
-
-        if any(t in types for t in ['hospital', 'doctor']):
+        
+        # 1. ใช้ types จาก cafe_summary (จาก places_nearby) เป็นหลัก
+        summary_types = cafe_summary.get('types', [])
+        if any(t in summary_types for t in ['hospital', 'doctor', 'health', 'clinic']):
             audience.add('ผู้ป่วย/บุคลากรทางการแพทย์')
-        if any(t in types for t in ['school', 'university']):
+        if any(t in summary_types for t in ['school', 'university', 'college']):
             audience.add('นักเรียน/นักศึกษา')
-        if any(t in types for t in ['shopping_mall', 'department_store']):
+        if any(t in summary_types for t in ['shopping_mall', 'department_store', 'store']):
             audience.add('นักช้อป')
-        if 'gas_station' in types:
+        if 'gas_station' in summary_types:
             audience.add('ผู้ใช้รถยนต์/นักเดินทาง')
-        if any(t in types for t in ['train_station', 'bus_station', 'airport']):
+        if any(t in summary_types for t in ['train_station', 'bus_station', 'airport', 'transit_station']):
             audience.add('ผู้โดยสาร/นักท่องเที่ยว')
+            
+        # 2. ใช้ name และ formatted_address จาก place_details เป็นข้อมูลสำรอง/เสริม
+        name = place_details.get('name', '').lower()
+        address = place_details.get('formatted_address', '').lower()
 
-        return ', '.join(list(audience)) if audience else 'กลุ่มเป้าหมายทั่วไป'
+        if not audience: # ถ้ายังไม่มีกลุ่มเป้าหมายจากการวิเคราะห์ types
+            if any(k in name or k in address for k in ['โรงพยาบาล', 'รพ.', 'clinic', 'คลินิก', 'hospital']):
+                audience.add('ผู้ป่วย/บุคลากรทางการแพทย์')
+            if any(k in name or k in address for k in ['โรงเรียน', 'มหาลัย', 'university', 'school', 'college']):
+                audience.add('นักเรียน/นักศึกษา')
+            if any(k in name or k in address for k in ['ห้าง', 'mall', 'department store', 'shopping']):
+                audience.add('นักช้อป')
+            if any(k in name or k in address for k in ['ปตท', 'บางจาก', 'esso', 'shell', 'ปั๊ม', 'gas station']):
+                audience.add('ผู้ใช้รถยนต์/นักเดินทาง')
+            if any(k in name or k in address for k in ['สถานีรถไฟ', 'สถานีขนส่ง', 'สนามบิน', 'airport', 'bus terminal', 'train station']):
+                audience.add('ผู้โดยสาร/นักท่องเที่ยว')
+
+        return ', '.join(list(audience)) if audience else None # คืนค่า None ถ้าไม่สามารถระบุกลุ่มเป้าหมายได้
 
     def process_cafe_data(self, cafes):
         processed_data = []
         total_cafes = len(cafes)
         all_coords = [{'lat': c['geometry']['location']['lat'], 'lng': c['geometry']['location']['lng']} for c in cafes]
         logger.info(f"เริ่มประมวลผลข้อมูลรายละเอียด {total_cafes} สาขา...")
-        for index, cafe_summary in enumerate(cafes):
+        for index, cafe_summary in enumerate(cafes): # เปลี่ยนชื่อตัวแปรจาก cafe_summary เป็น cafe_summary
             try:
                 logger.info(f"ประมวลผลสาขาที่ {index + 1}/{total_cafes} - {cafe_summary.get('name')}")
                 place_id = cafe_summary.get('place_id')
@@ -159,11 +164,20 @@ class CafeAmazonScraperV3_CostSaver:
                     distance = geodesic((lat, lng), (other_coord['lat'], other_coord['lng'])).kilometers
                     if distance < min_distance: min_distance = distance
                     if distance <= 2: nearby_count_2km += 1
+                
+                # ส่ง cafe_summary เข้าไปใน analyze_target_audience
+                target_audience = self.analyze_target_audience(cafe_summary, details)
+
                 processed_data.append({
-                    'ชื่อสาขา': details.get('name', 'N/A'), 'ที่อยู่': details.get('formatted_address', 'N/A'),
-                    'ละติจูด': lat, 'ลองจิจูด': lng, 'คะแนนเฉลี่ย': details.get('rating', 0),
-                    'จำนวนรีวิว': details.get('user_ratings_total', 0), 'ลักษณะทำเล': self.analyze_location_type(lat, lng),
-                    'ประเภทกลุ่มเป้าหมาย': self.analyze_target_audience(details), 'จำนวนสาขาในรัศมี_2_กม': nearby_count_2km,
+                    'ชื่อสาขา': details.get('name', 'N/A'),
+                    'ที่อยู่': details.get('formatted_address', 'N/A'),
+                    'ละติจูด': lat,
+                    'ลองจิจูด': lng,
+                    'คะแนนเฉลี่ย': details.get('rating', 0),
+                    'จำนวนรีวิว': details.get('user_ratings_total', 0),
+                    'ลักษณะทำเล': self.analyze_location_type(lat, lng),
+                    'ประเภทกลุ่มเป้าหมาย': target_audience, # ใช้ค่าที่ได้จากการปรับปรุง
+                    'จำนวนสาขาในรัศมี_2_กม': nearby_count_2km,
                     'ระยะห่างจากสาขาใกล้สุด_กม': round(min_distance, 2) if min_distance != float('inf') else 0,
                     'Place_ID': place_id
                 })
@@ -180,17 +194,12 @@ class CafeAmazonScraperV3_CostSaver:
             df = pd.DataFrame(data)
             df.to_csv(filename, index=False, encoding='utf-8-sig')
             logger.info(f"บันทึกข้อมูลสำเร็จ: {filename}")
-            # self.print_summary(df) # ปิดไว้ก่อนได้ถ้าไม่ต้องการให้แสดงผล
             return filename
         except Exception as e:
             logger.error(f"เกิดข้อผิดพลาดในการบันทึกไฟล์: {e}"); return None
 
     def run_full_scrape(self, output_filename=None, grid_size_km=16):
-        """
-        เรียกใช้การดึงข้อมูลแบบเต็ม โดยสามารถกำหนดขนาด Grid ได้
-        """
         logger.info(f"--- เริ่มการดึงข้อมูล Cafe Amazon (V3 - โหมดประหยัด) ---")
-        # ส่งค่า grid_size_km ที่ต้องการไปยังฟังก์ชัน search
         cafes = self.search_cafe_amazon_in_thailand(grid_size_km=grid_size_km)
 
         if not cafes:
@@ -199,24 +208,19 @@ class CafeAmazonScraperV3_CostSaver:
         processed_data = self.process_cafe_data(cafes)
         filename = self.save_to_csv(processed_data, output_filename)
         return filename
-    # **** END: จุดที่มีการแก้ไข ****
 
 # --- ตัวอย่างการใช้งาน ---
 def main():
-    API_KEY = "AIzaSyAJzaEOUtIRXZyS9WCUW4lc66-jdpZ-iS4"
-
-    if API_KEY == "AIzaSyAJzaEOUtIRXZyS9WCUW4lc66-jdpZ-iS4":
-        print("!!! คำเตือน: โปรดใส่ Google Maps API Key ของคุณในตัวแปร API_KEY ก่อนรันสคริปต์")
-        return
+    # เปลี่ยน API_KEY เป็นคีย์ของคุณ
+    API_KEY = "AIzaSyAJzaEOUtIRXZyS9WCUW4lc66-jdpZ-iS4" # ตัวอย่างคีย์ของคุณ
 
     scraper = CafeAmazonScraperV3_CostSaver(API_KEY)
 
-    # เรียกใช้งานโหมดประหยัด โดยใช้ Grid ขนาด 16 กม.
     result_file = scraper.run_full_scrape(
-        output_filename="cafe_amazon_thailand_data_costsaver.csv",
+        output_filename="cafe_amazon_thailand_data_costsaver_null_audience.csv", # เปลี่ยนชื่อไฟล์ output เพื่อแยกแยะ
         grid_size_km=16
     )
-
+()
     if result_file:
         print(f"\nการดึงข้อมูลเสร็จสิ้น! ไฟล์ถูกบันทึกที่: {result_file}")
         print(f"ค่าใช้จ่ายโดยประมาณสำหรับการรันครั้งนี้อยู่ที่ ~ $280 USD (ก่อนหักเครดิตฟรี $200)")
